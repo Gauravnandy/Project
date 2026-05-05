@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+{% block title %}Live Detection{% endblock %}
+{% block page_title %}Live Detection{% endblock %}
+
+{% block content %}
+<div class="rt-layout">
+    <!-- CENTER COLUMN — Video Feed + Stats -->
+    <div class="rt-center">
+        <div class="rt-video-area">
+            <div class="video-wrapper scanning" id="videoContainer">
+                <img id="videoStream" src="" alt="Video Stream" style="display:none">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)"
+                        stroke-width="1.5" style="margin-bottom:12px">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M16.24 7.76a6 6 0 010 8.49m-8.48-.01a6 6 0 010-8.49m11.31-2.82a10 10 0 010 14.14m-14.14 0a10 10 0 010-14.14" />
+                    </svg>
+                    <div>Select a camera source and press <strong>Start</strong> to begin live detection</div>
+                </div>
+            </div>
+        </div>
+        <div class="rt-stats">
+            <div class="stats-row" style="grid-template-columns:repeat(4,1fr)">
+                <div class="stat-card danger">
+                    <div class="stat-value" id="totalMatches">0</div>
+                    <div class="stat-label">Matches</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="storedPersons">0</div>
+                    <div class="stat-label">Persons in DB</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="streamFps">0</div>
+                    <div class="stat-label">FPS</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-value" id="streamHealth">—</div>
+                    <div class="stat-label">Status</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL — Detections on top, then controls (scrollable) -->
+    <div class="rt-panel">
+        <!-- Live Detections (top of sidebar) -->
+        <div class="glass-panel detections-panel">
+            <h2>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+                Live Detections
+                <span class="detection-count-badge" id="detectionCountBadge" style="display:none">0</span>
+            </h2>
+            <div id="matchesContainer">
+                <div class="empty-state">No matches yet. Start detection to begin monitoring.</div>
+            </div>
+        </div>
+
+        <!-- Stream Controls -->
+        <div class="glass-panel">
+            <h2>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <polygon points="10 8 16 12 10 16 10 8" />
+                </svg>
+                Stream Controls
+            </h2>
+            <div class="form-group">
+                <label>Camera Source</label>
+                <select id="cameraSource" class="form-control">
+                    <option value="_loading">Loading cameras...</option>
+                </select>
+            </div>
+            <div class="form-group" id="customUrlGroup" style="display:none">
+                <label>Stream URL (RTSP / HTTP)</label>
+                <input type="text" id="customStreamUrl" class="form-control" placeholder="rtsp://...">
+            </div>
+            <div class="form-group">
+                <label>Status: <span class="status-dot offline" id="statusIndicator"></span><span id="statusText"
+                        style="color:var(--text-secondary)">Inactive</span></label>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-success" id="startBtn" style="flex:1">▶ Start</button>
+                <button class="btn btn-danger" id="stopBtn" disabled style="flex:1">⏹ Stop</button>
+                <button class="btn btn-outline" id="reloadBtn" style="flex:1">↻ Reload</button>
+            </div>
+        </div>
+
+        <!-- Add Stream -->
+        <div class="glass-panel">
+            <h2>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Add Stream
+            </h2>
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="newStreamName" class="form-control" placeholder="e.g. Entrance CCTV">
+            </div>
+            <div class="form-group">
+                <label>URL</label>
+                <input type="text" id="newStreamUrl" class="form-control" placeholder="rtsp://user:pass@ip:554/stream">
+            </div>
+            <div class="form-group">
+                <label>Type</label>
+                <select id="newStreamType" class="form-control">
+                    <option value="cctv">CCTV</option>
+                    <option value="drone">Drone</option>
+                </select>
+            </div>
+            <button class="btn btn-outline btn-block btn-sm" id="addStreamBtn">Add Stream</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const matchNotificationCooldown = 10000;
+    const alertNotificationCooldown = 15000;
+    const matchDisplayedAt = {};
+    const alertDisplayedAt = {};
+    const alertBurstWindowMs = 60000;
+    const alertBurstMax = 5;
+    const alertBurstStats = {};
+    const activeMatchCards = {};
+
+    // Add realtime-specific socket listeners
+    function initRealtimeSocket() {
+        if (!socket) { setTimeout(initRealtimeSocket, 200); return; }
+
+        socket.on('frame_update', function (data) {
+            const img = document.getElementById('videoStream');
+            img.src = 'data:image/jpeg;base64,' + data.frame;
+            img.style.display = 'block';
+            document.getElementById('videoPlaceholder').style.display = 'none';
+            document.getElementById('streamFps').textContent = (data.fps || 0).toFixed(1);
+        });
+
+        socket.on('match_found', function (data) {
+            if (!data.matches || data.matches.length === 0) return;
+            const now = Date.now();
+            const filtered = data.matches.filter(function (m) {
+                const key = m.name || 'unknown';
+                const last = matchDisplayedAt[key] || 0;
+                if (now - last >= matchNotificationCooldown) { matchDisplayedAt[key] = now; return true; }
+                return false;
+            });
+            if (filtered.length === 0) return;
+            var count = parseInt(document.getElementById('totalMatches').textContent) || 0;
+            count += filtered.length;
+            document.getElementById('totalMatches').textContent = count;
+            // Update detection badge
+            var badge = document.getElementById('detectionCountBadge');
+            badge.textContent = count;
+            badge.style.display = 'inline-flex';
+            // Flash video border
+            var vc = document.getElementById('videoContainer');
+            vc.classList.add('detection-flash');
+            setTimeout(function () { vc.classList.remove('detection-flash'); }, 1000);
+            addMatch(filtered, data.timestamp);
+        });
+
+        socket.on('alert_triggered', function (data) {
+            var now = Date.now();
+            var person = data.person_name || 'unknown';
+            var stats = alertBurstStats[person] || { count: 0, windowStart: now };
+            if (now - stats.windowStart > alertBurstWindowMs) { stats.count = 0; stats.windowStart = now; }
+            if (stats.count >= alertBurstMax) return;
+            stats.count++;
+            alertBurstStats[person] = stats;
+            var last = alertDisplayedAt[person] || 0;
+            if (now - last < alertNotificationCooldown) return;
+            alertDisplayedAt[person] = now;
+            showFloatingAlert(data);
+            if (data.person_name) {
+                var container = document.getElementById('matchesContainer');
+                if (container.querySelector('.empty-state')) container.innerHTML = '';
+                var div = document.createElement('div');
+                div.className = 'match-item alert-type';
+                div.innerHTML = '<h3>🚨 ' + escapeHtml(data.person_name) + '</h3>' +
+                    '<div class="match-conf">Alert: ' + escapeHtml(data.confidence) + '</div>' +
+                    '<div class="match-details"><strong>Camera:</strong> ' + escapeHtml(data.camera_source || 'unknown') +
+                    '<br><strong>Time:</strong> ' + new Date(data.timestamp).toLocaleString() + '</div>';
+                container.insertBefore(div, container.firstChild);
+            }
+        });
+    }
+
+    function updateStatus(text, isActive) {
+        var ind = document.getElementById('statusIndicator');
+        var st = document.getElementById('statusText');
+        st.textContent = text;
+        ind.className = 'status-dot ' + (isActive ? 'online' : 'offline');
+    }
+
+    function addMatch(matches, timestamp) {
+        var container = document.getElementById('matchesContainer');
+        if (container.querySelector('.empty-state')) container.innerHTML = '';
+        matches.forEach(function (m) {
+            var person = m.name || 'unknown';
+            var existing = activeMatchCards[person];
+            if (existing) {
+                existing.querySelector('.match-conf').textContent = 'Confidence: ' + m.confidence;
+            } else {
+                var div = document.createElement('div');
+                div.className = 'match-item';
+                div.innerHTML = '<h3>' + escapeHtml(person) + '</h3>' +
+                    '<div class="match-conf">Confidence: ' + m.confidence + '</div>' +
+                    '<div class="match-details"><strong>Similarity:</strong> ' + (m.similarity * 100).toFixed(2) + '%' +
+                    '<br><strong>Detected:</strong> ' + new Date(timestamp).toLocaleString() + '</div>';
+                container.insertBefore(div, container.firstChild);
+                activeMatchCards[person] = div;
+                if (container.children.length > 8) container.lastChild.remove();
+            }
+        });
+    }
+
+    function showFloatingAlert(data) {
+        var banner = document.getElementById('alertBanner');
+        var name = (data && data.person_name) ? data.person_name : 'Unknown';
+        var conf = (data && data.confidence) ? data.confidence : 'N/A';
+        banner.innerHTML = '🚨 <strong>ALERT:</strong> ' + escapeHtml(name) + ' detected! &nbsp; <small>Confidence: ' + escapeHtml(conf) + '</small>';
+        banner.classList.add('show');
+        setTimeout(function () { banner.classList.remove('show'); }, 6000);
+    }
+
+    // Start stream
+    document.getElementById('startBtn').addEventListener('click', async function () {
+        var sel = document.getElementById('cameraSource');
+        var custom = document.getElementById('customStreamUrl').value.trim();
+        var source = sel.value;
+        var camName = sel.selectedOptions[0] ? (sel.selectedOptions[0].dataset.name || sel.selectedOptions[0].textContent) : String(source);
+        if (source === '_custom') { if (!custom) { showToast('Error', 'Enter stream URL', 'warning'); return; } source = custom; }
+        else if (/^\d+$/.test(String(source))) source = parseInt(source, 10);
+        this.disabled = true;
+        updateStatus('Initializing...', true);
+        document.getElementById('totalMatches').textContent = '0';
+        document.getElementById('matchesContainer').innerHTML = '<div class="empty-state">Waiting for detections...</div>';
+        try {
+            var res = await fetch(API_BASE_URL + '/api/stream/start', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: source, camera_name: camName })
+            });
+            var data = await res.json();
+            if (data.success) {
+                updateStatus('Processing', true);
+                document.getElementById('statusIndicator').className = 'status-dot recording';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                document.getElementById('videoContainer').classList.remove('scanning');
+            } else {
+                updateStatus('Error', false);
+                showToast('Camera Error', data.error || 'Failed to start', 'danger');
+                this.disabled = false;
+            }
+        } catch (e) { updateStatus('Failed', false); showToast('Error', e.message, 'danger'); this.disabled = false; }
+    });
+
+    // Stop stream
+    document.getElementById('stopBtn').addEventListener('click', async function () {
+        this.disabled = true;
+        updateStatus('Stopping...', false);
+        try {
+            var res = await fetch(API_BASE_URL + '/api/stream/stop', { method: 'POST' });
+            var data = await res.json();
+            if (data.success) {
+                updateStatus('Stopped', false);
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('videoStream').style.display = 'none';
+                document.getElementById('videoPlaceholder').style.display = '';
+                document.getElementById('videoContainer').classList.add('scanning');
+            } else { this.disabled = false; }
+        } catch (e) { this.disabled = false; }
+    });
+
+    // Reload
+    document.getElementById('reloadBtn').addEventListener('click', async function () {
+        try {
+            var res = await fetch(API_BASE_URL + '/api/stream/reload', { method: 'POST' });
+            var data = await res.json();
+            if (data.success) { showToast('Reloaded', data.message, 'success'); updateStats(); }
+        } catch (e) { showToast('Error', e.message, 'danger'); }
+    });
+
+    // Stats polling
+    async function updateStats() {
+        try {
+            var res = await fetch(API_BASE_URL + '/api/stream/status');
+            var data = await res.json();
+            if (data.success) {
+                document.getElementById('storedPersons').textContent = data.stored_persons || 0;
+                document.getElementById('streamFps').textContent = (data.fps || 0).toFixed ? (data.fps || 0).toFixed(1) : (data.fps || 0);
+                document.getElementById('streamHealth').textContent = (data.health_status || '—');
+            }
+        } catch (e) { }
+    }
+
+    // Camera source
+    document.getElementById('cameraSource').addEventListener('change', function () {
+        document.getElementById('customUrlGroup').style.display = this.value === '_custom' ? 'block' : 'none';
+    });
+
+    async function loadCameras() {
+        var sel = document.getElementById('cameraSource');
+        try {
+            var res = await fetch(API_BASE_URL + '/api/cameras');
+            var data = await res.json();
+            if (!data.success) throw new Error();
+            sel.innerHTML = '';
+            (data.cameras || []).forEach(function (c) {
+                var opt = document.createElement('option');
+                opt.value = typeof c.source === 'number' ? c.source : c.source || '';
+                opt.textContent = c.name + ' (' + c.type + ')';
+                opt.dataset.name = c.name;
+                sel.appendChild(opt);
+            });
+            var custom = document.createElement('option');
+            custom.value = '_custom';
+            custom.textContent = 'Custom URL (CCTV / Drone)';
+            sel.appendChild(custom);
+        } catch (e) {
+            sel.innerHTML = '<option value="0">Default Webcam (0)</option><option value="_custom">Custom URL</option>';
+        }
+    }
+
+    // Add stream
+    document.getElementById('addStreamBtn').addEventListener('click', async function () {
+        var name = document.getElementById('newStreamName').value.trim();
+        var url = document.getElementById('newStreamUrl').value.trim();
+        var type = document.getElementById('newStreamType').value;
+        if (!name || !url) { showToast('Error', 'Enter name and URL', 'warning'); return; }
+        try {
+            var res = await fetch(API_BASE_URL + '/api/cameras/save', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, source: url, type: type })
+            });
+            var data = await res.json();
+            if (data.success) {
+                showToast('Stream Added', 'Refreshing list', 'success');
+                document.getElementById('newStreamName').value = '';
+                document.getElementById('newStreamUrl').value = '';
+                loadCameras();
+            } else { showToast('Error', data.error, 'danger'); }
+        } catch (e) { showToast('Error', e.message, 'danger'); }
+    });
+
+    initRealtimeSocket();
+    updateStatus('Ready', false);
+    loadCameras();
+    updateStats();
+    setInterval(updateStats, 10000);
+</script>
+{% endblock %}

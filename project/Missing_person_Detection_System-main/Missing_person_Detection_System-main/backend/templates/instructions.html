@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Operator Guide{% endblock %}
+{% block page_title %}Operator Guide{% endblock %}
+
+{% block content %}
+<div class="glass-panel">
+    <h2>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zm20 0h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        How to Track Missing Subjects
+    </h2>
+
+    <div class="instruction-card">
+        <div class="instruction-step">1</div>
+        <div class="instruction-content">
+            <h3>Register a Target</h3>
+            <p>Navigate to the <strong>Dashboard</strong> and use the registration form. Provide the subject's legal name and upload a clear, front-facing photograph without sunglasses or masks. The system instantly computes an encrypted biometric embedding of their face.</p>
+            <div class="pro-tip">
+                <strong>Pro Tip:</strong> Images sourced from ID cards yield >98% true-positive matches across varying lighting conditions.
+            </div>
+        </div>
+    </div>
+
+    <div class="instruction-card">
+        <div class="instruction-step">2</div>
+        <div class="instruction-content">
+            <h3>Configure Data Streams</h3>
+            <p>Navigate to the <strong>Live Detection</strong> tab. Deploy streams dynamically by adding RTSP endpoints linked to your CCTV system or drone payloads. Enter the IP configuration in the Add Stream panel.</p>
+        </div>
+    </div>
+
+    <div class="instruction-card">
+        <div class="instruction-step">3</div>
+        <div class="instruction-content">
+            <h3>Monitor & Alert</h3>
+            <p>Launch the stream by pressing <strong>Start</strong>. The dashboard binds WebSocket connections to the inference pipeline. YOLO face detection runs locally with InsightFace ArcFace recognition.</p>
+            <p>Matches exceeding a 0.55 similarity threshold trigger instantaneous alerts — both visual toasts and audible notifications.</p>
+            <div class="pro-tip">
+                <strong>Audit Compliance:</strong> All detections and alerts are logged chronologically and preserved in the Admin Panel for law enforcement review.
+            </div>
+        </div>
+    </div>
+
+    <div class="instruction-card">
+        <div class="instruction-step">4</div>
+        <div class="instruction-content">
+            <h3>Manual Accuracy Testing</h3>
+            <p>Use the <strong>Camera Test</strong> page for offline verification. Field agents can capture snapshots from laptop webcams and test them against the master embedding database. This is useful for validating model accuracy and testing detection quality.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

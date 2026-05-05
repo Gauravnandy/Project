@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Camera Test{% endblock %}
+{% block page_title %}Camera Test — Accuracy Verification{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- Camera Feed -->
+    <div class="glass-panel">
+        <h2>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span class="status-dot offline" id="statusIndicator"></span>
+            Camera Feed
+        </h2>
+        <div class="video-wrapper" style="min-height:300px">
+            <video id="videoElement" autoplay playsinline style="width:100%;display:block"></video>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px">
+            <button class="btn btn-success" id="startBtn" style="flex:1">Start Camera</button>
+            <button class="btn btn-primary" id="captureBtn" disabled style="flex:1">Capture & Detect</button>
+            <button class="btn btn-danger" id="stopBtn" disabled style="flex:1">Stop Camera</button>
+        </div>
+        <div id="cameraMessage" class="message-box"></div>
+        <div id="cameraLoading" class="loading-container">
+            <div class="spinner"></div>
+            <p>Analyzing face...</p>
+        </div>
+    </div>
+
+    <!-- Detection Results -->
+    <div class="glass-panel">
+        <h2>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Detection Results
+        </h2>
+        <div id="resultsContainer" style="overflow-y:auto;max-height:60vh">
+            <div class="empty-state">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" style="margin-bottom:10px"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                <div>Start the camera and capture a frame to test detection accuracy</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    var stream = null;
+    var video = document.getElementById('videoElement');
+    var canvas = document.createElement('canvas');
+    var context = canvas.getContext('2d');
+
+    // Start camera
+    document.getElementById('startBtn').addEventListener('click', async function() {
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('Camera API not supported in this browser');
+            }
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode:'user', width:{ideal:1280}, height:{ideal:720} }
+            });
+            if (stream.getVideoTracks().length === 0) {
+                stream.getTracks().forEach(function(t){t.stop()});
+                stream = await navigator.mediaDevices.getUserMedia({video:true});
+            }
+            video.srcObject = stream;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('captureBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('statusIndicator').className = 'status-dot online';
+            showMsg('cameraMessage', 'Camera started successfully', 'message-success');
+        } catch(error) {
+            var msg = error.message;
+            if (error.name === 'NotAllowedError') msg = 'Camera access denied. Please allow camera access.';
+            else if (error.name === 'NotFoundError') msg = 'No camera found.';
+            else if (error.name === 'NotReadableError') msg = 'Camera is in use by another application.';
+            showMsg('cameraMessage', 'Error: ' + msg, 'message-error');
+        }
+    });
+
+    // Stop camera
+    document.getElementById('stopBtn').addEventListener('click', function() {
+        if (stream) {
+            stream.getTracks().forEach(function(t){t.stop()});
+            stream = null;
+            video.srcObject = null;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('captureBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('statusIndicator').className = 'status-dot offline';
+            showMsg('cameraMessage', 'Camera stopped', 'message-info');
+        }
+    });
+
+    // Capture & detect
+    document.getElementById('captureBtn').addEventListener('click', async function() {
+        if (!stream) { showMsg('cameraMessage', 'Start camera first', 'message-error'); return; }
+        var btn = this;
+        var loading = document.getElementById('cameraLoading');
+        btn.disabled = true;
+        loading.classList.add('show');
+        try {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(async function(blob) {
+                var formData = new FormData();
+                formData.append('image', blob, 'camera_capture.jpg');
+                try {
+                    var res = await fetch(API_BASE_URL + '/detect', { method:'POST', body:formData });
+                    var data = await res.json();
+                    loading.classList.remove('show');
+                    if (data.success) {
+                        if (data.matches && data.matches.length > 0) {
+                            displayMatches(data.matches, data.faces_detected || 1);
+                            showMsg('cameraMessage', data.message, 'message-success');
+                        } else {
+                            displayMatches([], data.faces_detected || 0);
+                            showMsg('cameraMessage', data.message || 'No match found', 'message-info');
+                        }
+                    } else {
+                        showMsg('cameraMessage', data.error, 'message-error');
+                        displayMatches([], 0);
+                    }
+                } catch(e) {
+                    loading.classList.remove('show');
+                    showMsg('cameraMessage', 'Error: ' + e.message, 'message-error');
+                } finally { btn.disabled = false; }
+            }, 'image/jpeg', 0.95);
+        } catch(e) {
+            loading.classList.remove('show');
+            showMsg('cameraMessage', 'Capture error: ' + e.message, 'message-error');
+            btn.disabled = false;
+        }
+    });
+
+    function displayMatches(matches, facesDetected) {
+        var container = document.getElementById('resultsContainer');
+        if (matches.length === 0) {
+            container.innerHTML = '<div class="empty-state">' +
+                (facesDetected > 0 ? 'Detected '+facesDetected+' face(s) — no matches in database' : 'No faces detected in frame') +
+                '</div>';
+            return;
+        }
+        // Group by person
+        var byPerson = {};
+        matches.forEach(function(m) {
+            if (!byPerson[m.name]) byPerson[m.name] = [];
+            byPerson[m.name].push(m);
+        });
+        var names = Object.keys(byPerson);
+        var html = '<div class="stat-card danger" style="margin-bottom:16px;text-align:center">' +
+            '<div class="stat-value">' + names.length + '</div>' +
+            '<div class="stat-label">Missing Person' + (names.length>1?'s':'') + ' Found</div></div>';
+
+        names.forEach(function(name) {
+            var best = byPerson[name].reduce(function(a,b){return b.similarity>a.similarity?b:a});
+            var pct = (best.similarity * 100).toFixed(2);
+            var level = best.similarity >= 0.6 ? 'high' : (best.similarity >= 0.4 ? 'medium' : 'low');
+            html += '<div class="match-item alert-type">' +
+                '<h3>🚨 ' + escapeHtml(name) + '</h3>' +
+                '<div class="match-conf">' + best.confidence + '</div>' +
+                '<div class="confidence-bar"><div class="confidence-fill ' + level + '" style="width:' + pct + '%"></div></div>' +
+                '<div class="match-details" style="margin-top:8px">' +
+                    '<strong>Similarity:</strong> ' + pct + '%<br>' +
+                    '<strong>Registered:</strong> ' + (best.created_at ? new Date(best.created_at).toLocaleString() : 'N/A') +
+                '</div></div>';
+        });
+        container.innerHTML = html;
+    }
+
+    function showMsg(id, msg, type) {
+        var el = document.getElementById(id);
+        el.textContent = msg;
+        el.className = 'message-box ' + type + ' show';
+        setTimeout(function() { el.classList.remove('show'); }, 5000);
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,3 @@
+{"timestamp": "2026-04-29T18:12:48.079610", "event_type": "PERSON_DELETED", "description": "Removed missing person: Ganesh", "user": "system", "details": {"name": "Ganesh", "image_file": "20260429_123401_ganesh_kute.png"}}
+{"timestamp": "2026-04-29T18:13:26.821925", "event_type": "PERSON_ADDED", "description": "Added missing person: Ganesh Kute", "user": "system", "details": {"name": "Ganesh Kute", "image_file": "20260429_181324_WIN_20260317_10_59_41_Pro.jpg"}}
+{"timestamp": "2026-04-29T19:03:47.110858", "event_type": "PERSON_ADDED", "description": "Added missing person: vandana", "user": "system", "details": {"name": "vandana", "image_file": "20260429_190346_photo_2026-03-25_15-40-31.jpg"}}
